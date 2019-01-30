@@ -160,6 +160,26 @@ class OfflineImap(object):
                   metavar="[section:]option=value",
                   help="override configuration file option")
 
+        parser.add_option("--update-conf", dest="newconfigfile",
+                  metavar="NEWCONFIGFILE",
+                  default=None,
+                  help="(EXPERIMENTAL: do not support changes in account names)"
+                  "convert actual config to new config from source file,"
+                  "and replace configfile with sourcefile.")
+
+        parser.add_option("--restore-update", dest="failedupdaterestore",
+                  metavar="FAILEDUPDATERESTORE",
+                  default=None,
+                  help="in conjonction with --update-conf, "
+                  "restore a failed update process.")
+
+        parser.add_option("--move-content",
+                  action="store_true",
+                  dest="movecontent",
+                  default=False,
+                  help="in conjonction with --update-conf, "
+                  "move content of folder instead of copying.")
+
         parser.add_option("-o",
                   action="store_true", dest="runonce",
                   default=False,
@@ -245,6 +265,47 @@ class OfflineImap(object):
                 else:
                     section = "general"
                 config.set(section, key, value)
+
+        # Update and convert config file.
+        if options.newconfigfile:
+            newconfigfilename = os.path.expanduser(options.newconfigfile)
+
+            # Read new configfile
+            newconfigfile = CustomConfigParser()
+            if not os.path.exists(newconfigfilename):
+                # TODO, initialize and make use of chosen ui for logging
+                logging.error(" *** New config file '%s' does not exist; aborting!"%
+                              newconfigfilename)
+                sys.exit(1)
+            newconfigfile.read(newconfigfilename)
+            
+            if options.dryrun:
+                dryrun = newconfigfile.set('general', 'dry-run', 'True')
+            newconfigfile.set_if_not_exists('general', 'dry-run', 'False')
+
+            if options.failedupdaterestore:
+                failedupdaterestore = options.failedupdaterestore
+                if not os.path.exists(failedupdaterestore):
+                    # TODO, initialize and make use of chosen ui for logging
+                    logging.error(" *** Failed update '%s' does not exist; aborting!"%
+                                  failedupdaterestore)
+                    sys.exit(1)
+            else:
+                failedupdaterestore = ''
+
+            # Set update options in both config files
+            # and initialize some vars.
+            self.config_filename = configfilename
+            self.newconfig_filename = newconfigfilename
+            newconfigfile.set('general', 'update-conf', 'True')
+            newconfigfile.set('general', 'is-new-config-source', 'True')
+            newconfigfile.set('general', 'movecontent', str(options.movecontent))
+            newconfigfile.set('general', 'failedupdaterestore', failedupdaterestore)
+            config.set('general', 'update-conf', 'True')
+            config.set('general', 'movecontent', str(options.movecontent))
+            self.newconfig = newconfigfile
+        config.set('general', 'is-new-config-source', 'False')
+        config.set_if_not_exists('general', 'update-conf', 'False')
 
         # Which ui to use? CLI option overrides config file.
         ui_type = config.getdefault('general', 'ui', 'ttyui')
