@@ -480,6 +480,46 @@ class OfflineImap(object):
 
         return activeaccounts
 
+    def _get_newactiveaccounts(self, activeaccounts, options):
+        """Check that each accounts in new config file exists in old config
+        file.
+        Assumes that self.newconfig is defined.
+        Based on _get_activeaccounts()
+        """
+
+        oldactiveaccounts = activeaccounts
+        newactiveaccounts = []
+        errormsg = None
+
+        # Load accounts in new config file source
+        newactiveaccountnames = self.newconfig.get("general", "accounts")
+        if options.accounts:
+            newactiveaccountnames = options.accounts
+        newactiveaccountnames = [x.lstrip()
+                                 for x in newactiveaccountnames.split(",")]
+
+        allnewaccounts = accounts.getaccountlist(self.newconfig)
+  
+        # Check for new config file accounts integrety
+        # (not sure if it does) and if check if they exists
+        # in old config file
+        for accountname in newactiveaccountnames:
+            if accountname in allnewaccounts \
+               and accountname in oldactiveaccounts:
+                newactiveaccounts.append(accountname)
+            else:
+                errormsg = "Valid accounts are: %s"% (
+                    ", ".join(oldactiveaccounts))
+                self.ui.error("The account '%s' does not exist"% accountname)
+
+        if len(activeaccounts) < 1:
+            errormsg = "No accounts are defined!"
+
+        if errormsg is not None:
+            self.ui.terminate(1, errormsg=errormsg)
+
+        return newactiveaccounts
+
     def __sync(self, options):
         """Invoke the correct single/multithread syncing
 
@@ -526,7 +566,16 @@ class OfflineImap(object):
             activeaccounts = self._get_activeaccounts(options)
             mbnames.init(self.config, self.ui, options.dryrun)
 
-            if options.singlethreading:
+            if options.newconfigfile:
+                # Update directory structure and folder names
+                # instead of syncing.
+                newactiveaccounts = self._get_newactiveaccounts(activeaccounts,
+                                                                options)
+                mbnames.init(self.newconfig, self.ui, options.dryrun)
+                self.__updateconf(activeaccounts, newactiveaccounts,
+                                  options.profiledir)
+
+            elif options.singlethreading:
                 # Singlethreaded.
                 self.__sync_singlethreaded(activeaccounts, options.profiledir)
             else:
