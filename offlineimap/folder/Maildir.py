@@ -295,7 +295,6 @@ class MaildirFolder(BaseFolder):
             uid, self._foldermd5, self.infosep, ''.join(sorted(flags)))
         return uniq_name.replace(os.path.sep, self.sep_subst)
 
-
     def save_to_tmp_file(self, filename, content):
         """Saves given content to the named temporary file in the
         'tmp' subdirectory of $CWD.
@@ -415,6 +414,9 @@ class MaildirFolder(BaseFolder):
         self.savemessageflags(uid, flags)
         self.ui.debug('maildir', 'savemessage: returning uid %d' % uid)
         return uid
+
+    def getmessagefilename(self, uid):
+        return self.messagelist[uid]['filename']
 
     # Interface from BaseFolder
     def getmessageflags(self, uid):

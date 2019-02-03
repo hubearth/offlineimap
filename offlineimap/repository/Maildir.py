@@ -130,6 +130,30 @@ class MaildirRepository(BaseRepository):
                 else:
                     raise
 
+    def moveroot(self, newroot, update_mbnames = False):
+        '''Move local repository root folder to a new path.
+
+        This function is called by the config updating process.
+
+        TODO: update mbnames according to new root'''
+
+        self.ui.moveroot(self.name, newroot)
+        if self.account.dryrun:
+            return
+        try:
+            os.renames(self.root, newroot)
+            self.root = newroot
+        except OSError or OfflineImapError as e:
+            self.ui.error(e, exc_info()[2],
+                          "Moving root from '%s' to '%s'"%
+                          (self.root, newroot))
+            raise
+
+        if update_mbnames:
+            self.ui.warn("Updating mbname for moving root folder NOT YET IMPLEMENTED")
+            # raise 
+            #XXX TODO
+
     def deletefolder(self, foldername):
         self.ui.warn("NOT YET IMPLEMENTED: DELETE FOLDER %s"% foldername)
 

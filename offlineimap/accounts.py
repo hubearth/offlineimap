@@ -257,7 +257,8 @@ class SyncableAccount(Account):
                 pass    # Failed to delete for some reason.
 
     def syncrunner(self):
-        """The target for both single and multi-threaded modes."""
+        """The target for three mode:
+        single mode, multi-threaded mode and update-conf mode."""
 
         self.ui.registerthread(self)
         try:
@@ -279,8 +280,13 @@ class SyncableAccount(Account):
         while looping:
             self.ui.acct(self)
             try:
+                # if not self.config.getboolean('general', 'is-new-config-source'):
                 self.__lock()
-                self.__sync()
+                if self.config.getboolean('general', 'update-conf'):
+                    self.get_folderlist()
+                else:
+                    self.__sync()
+
             except (KeyboardInterrupt, SystemExit):
                 raise
             except OfflineImapError as e:
@@ -292,17 +298,26 @@ class SyncableAccount(Account):
                         raise
                 self.ui.error(e, exc_info()[2])
             except Exception as e:
-                self.ui.error(e, exc_info()[2], msg=
-                    "While attempting to sync account '%s'"% self)
+                if self.config.newconfigsource:
+                    self.ui.error(e, exc_info()[2], msg=
+                        "While attempting to update account '%s'"% self)
+                else:
+                    self.ui.error(e, exc_info()[2], msg=
+                        "While attempting to sync account '%s'"% self)
             else:
                 # After success sync, reset the looping counter to 3.
                 if self.refreshperiod:
                     looping = 3
             finally:
                 self.ui.acctdone(self)
-                self._unlock()
-                if looping and self._sleeper() >= 2:
+                # If in update-conf mode, keep original account locked
+                # and don't run sleeper
+                if self.config.getboolean('general', 'update-conf'):
                     looping = 0
+                else:
+                    self._unlock()
+                    if looping and self._sleeper() >= 2:
+                        looping = 0
 
     def get_local_folder(self, remotefolder):
         """Return the corresponding local folder for a given remotefolder."""
@@ -312,8 +327,8 @@ class SyncableAccount(Account):
             replace(self.remoterepos.getsep(), self.localrepos.getsep()))
 
 
-    # The syncrunner will loop on this method. This means it is called more than
-    # once during the run.
+    # The syncrunner will loop on this method (unless in update-conf mode).
+    # This means it is called more than once during the run.
     def __sync(self):
         """Synchronize the account once, then return.
 
@@ -451,6 +466,98 @@ class SyncableAccount(Account):
             raise
         except Exception as e:
             self.ui.error(e, exc_info()[2], msg="Calling hook")
+
+    ########
+    ### Config update methodes:
+    #
+    def movemetadatadir(self, newmetadatadir, update_mbnames=False):
+        '''Move metadatadir to a new path.
+
+        This function is called by the config updating process.
+
+        TODO: update mbnames according to new root'''
+
+        self.ui.movemetadatadir(self.name, newmetadatadir)
+        if update_mbnames:
+            self.ui.warn("Updating mbname for moving metadatadir NOT YET IMPLEMENTED")
+            # raise
+            #XXX TODO
+        if self.dryrun:
+            return
+
+        try:
+            from shutil import move
+            # Get list of metadata objects to move to backup folder
+            movables = []
+            movables.append(self.getaccountmeta())
+            if self._lockfilepath:
+                movables.append(self._lockfilepath)
+            movables.append(self.localrepos.metadatadir)
+            movables.append(self.remoterepos.metadatadir)
+
+            # Set path for new meta
+            self.config.set('general', 'metadata', newmetadatadir)
+            self.metadatadir = self.config.getmetadatadir()
+
+            # Move metadata
+            for m in movables:
+                basename = os.path.basename(m)
+                move(m, os.path.join(newmetadatadir, basename))
+
+            self._lockfilepath = os.path.join(
+                newmetadatadir,
+                os.path.basename(self._lockfilepath))
+            self.metadatadir = newmetadatadir
+            self.localrepos.metadatadir = None
+            self.localrepos.getmetadata()
+            self.remoterepos.metadatadir = None
+            self.remoterepos.getmetadata()
+            self.statusrepos.metadatadir = None
+            self.statusrepos.getmetadata()
+
+        except OSError or OfflineImapError as e:
+            self.ui.error(e, exc_info()[2],
+                          "Moving metadatadir to '%s'"%
+                          (newmetadatadir))
+            raise
+
+    # The syncrunner will loop on this method. This means it is called more than
+    # once during the run.
+    def get_folderlist(self):
+        """Get the account folderlist once, then return.
+
+        Assumes that `self.remoterepos`, `self.localrepos`, and
+        `self.statusrepos` has already been populated, so it should only
+        be called from the :meth:`syncrunner` function.
+
+        Based on __sync()"""
+
+        hook = self.getconf('presynchook', '')  # Is it important?
+        self.callhook(hook)
+
+        if self.utf_8_support and self.remoterepos.getdecodefoldernames():
+            raise OfflineImapError("Configuration mismatch in account " +
+                        "'%s'. "% self.getname() +
+                        "\nAccount setting 'utf8foldernames' and repository " +
+                        "setting 'decodefoldernames'\nmay not be used at the " +
+                        "same time. This account has not been updated.\n" +
+                        "Please check the configuration and documentation.",
+                    OfflineImapError.ERROR.REPO)
+
+        try:
+            self.remoterepos.getfolders()
+            self.remoterepos.dropconnections()
+            self.localrepos.getfolders()
+
+        #XXX: This section should be checked and
+        # rewritten (copy-pasted from callhook to handle try)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            self.ui.error(e, exc_info()[2], msg="Calling hook")
+
+        hook = self.getconf('postupdateconfhook', '')  # Is this right?
+        self.callhook(hook)
 
 
 #XXX: This function should likely be refactored. This should not be passed the

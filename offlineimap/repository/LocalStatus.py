@@ -53,6 +53,30 @@ class LocalStatusRepository(BaseRepository):
         # self._folders is a dict of name:LocalStatusFolders().
         self._folders = {}
 
+    def getmetadata(self):
+        # class and root for all backends.
+        self.backends = {}
+        self.backends['sqlite'] = {
+            'class': LocalStatusSQLiteFolder,
+            'root': os.path.join(self.account.getaccountmeta(), 'LocalStatus-sqlite')
+        }
+        self.backends['plain'] = {
+            'class': LocalStatusFolder,
+            'root': os.path.join(self.account.getaccountmeta(), 'LocalStatus')
+        }
+
+        if self.account.getconf('status_backend', None) is not None:
+            raise OfflineImapError(
+                "the 'status_backend' configuration option is not supported"
+                " anymore; please, remove this configuration option.",
+                OfflineImapError.ERROR.REPO
+            )
+        # Set class and root for sqlite.
+        self.setup_backend('sqlite')
+
+        if not os.path.exists(self.root):
+            os.mkdir(self.root, 0o700)
+
     def _instanciatefolder(self, foldername):
         return self.LocalStatusFolderClass(foldername, self) # Instanciate.
 

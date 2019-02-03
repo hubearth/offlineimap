@@ -63,6 +63,24 @@ class BaseRepository(CustomConfig.ConfigHelperMixin):
             self.foldersort = self.localeval.eval(
                 self.getconf('foldersort'), {'re': re})
 
+    def getmetadata(self):
+        if self.metadatadir and self.mapdir and self.uiddir:
+            return self.metadatadir, self.mapdir, self.uiddir
+        else:
+            self.metadatadir = os.path.join(self.config.getmetadatadir(),
+                                            'Repository-' + self.name)
+            if not os.path.exists(self.metadatadir):
+                os.mkdir(self.metadatadir, 0o700)
+            self.mapdir = os.path.join(self.metadatadir, 'UIDMapping')
+            if not os.path.exists(self.mapdir):
+                os.mkdir(self.mapdir, 0o700)
+            # FIXME: self.uiddir variable name is lying about itself.
+            # (Still true with this new method???)
+            self.uiddir = os.path.join(self.metadatadir, 'FolderValidity')
+            if not os.path.exists(self.uiddir):
+                os.mkdir(self.uiddir, 0o700)
+            return self.metadatadir, self.mapdir, self.uiddir
+
     def restore_atime(self):
         """Sets folders' atime back to their values after a sync
 
