@@ -452,6 +452,95 @@ class SyncableAccount(Account):
         except Exception as e:
             self.ui.error(e, exc_info()[2], msg="Calling hook")
 
+    ########
+    ### Config update methodes:
+    #
+    def movemetadatadir(self, newmetadatadir, update_mbnames=False):
+        '''Move metadatadir to a new path.
+
+        This function is called by the config updating process.
+
+        TODO: update mbnames according to new root'''
+
+        self.ui.movemetadatadir(self.name, newmetadatadir)
+        if update_mbnames:
+            self.ui.warn("Updating mbname for moving metadatadir NOT YET IMPLEMENTED")
+            # raise
+            #XXX TODO
+        if self.dryrun:
+            return
+
+        try:
+            # Get list of metadata objects to move to backup folder
+            movables = []
+            movables.append(self.getaccountmeta())
+            if self._lockfilepath:
+                movables.append(self._lockfilepath)
+            movables.append(self.localrepos.metadatadir)
+            movables.append(self.remoterepos.metadatadir)
+
+            # Set path for new meta
+            self.config.set('general', 'metadata', newmetadatadir)
+            self.metadatadir = self.config.getmetadatadir()
+
+            # Move metadata
+            for m in movables:
+                basename = os.path.basename(m)
+                os.renames(m, os.path.join(newmetadatadir, basename))
+
+            self._lockfilepath = os.path.join(
+                newmetadatadir,
+                os.path.basename(self._lockfilepath))
+            self.metadatadir = newmetadatadir
+            self.localrepos.metadatadir = None
+            self.localrepos.getmetadata()
+            self.remoterepos.metadatadir = None
+            self.remoterepos.getmetadata()
+
+        except OSError or OfflineImapError as e:
+            self.ui.error(e, exc_info()[2],
+                          "Moving metadatadir to '%s'"%
+                          (newmetadatadir))
+            raise
+
+    # The syncrunner will loop on this method. This means it is called more than
+    # once during the run.
+    def get_folderlist(self):
+        """Get the account folderlist once, then return.
+
+        Assumes that `self.remoterepos`, `self.localrepos`, and
+        `self.statusrepos` has already been populated, so it should only
+        be called from the :meth:`syncrunner` function.
+
+        Based on __sync()"""
+
+        hook = self.getconf('presynchook', '')  # Is it important?
+        self.callhook(hook)
+
+        if self.utf_8_support and self.remoterepos.getdecodefoldernames():
+            raise OfflineImapError("Configuration mismatch in account " +
+                        "'%s'. "% self.getname() +
+                        "\nAccount setting 'utf8foldernames' and repository " +
+                        "setting 'decodefoldernames'\nmay not be used at the " +
+                        "same time. This account has not been updated.\n" +
+                        "Please check the configuration and documentation.",
+                    OfflineImapError.ERROR.REPO)
+
+        try:
+            self.remoterepos.getfolders()
+            self.remoterepos.dropconnections()
+            self.localrepos.getfolders()
+
+        #XXX: This section should be checked and
+        # rewritten (copy-pasted from callhook to handle try)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            self.ui.error(e, exc_info()[2], msg="Calling hook")
+
+        hook = self.getconf('postupdateconfhook', '')  # Is this right?
+        self.callhook(hook)
+
 
 #XXX: This function should likely be refactored. This should not be passed the
 # account instance.

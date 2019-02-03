@@ -344,6 +344,68 @@ class UIBase(object):
             self.debug('', "Copying folder structure from %s to %s" %\
                            (src_repo, dst_repo))
 
+    ############################## Config updating
+
+    def updateconf(self, oldconf, newconf):
+        """Output that we start the updating process."""
+
+        self.acct_startimes['updateconf'] = time.time()
+        self.logger.info("*** Updating config file %s from source %s"%
+            (oldconf, newconf))
+
+    def updateconfdone(self):
+        """Output that we finished the updating process."""
+
+        sec = time.time() - self.acct_startimes['updateconf']
+        del self.acct_startimes['updateconf']
+        self.logger.info("*** Finished updating config. Total time elapsed: %d:%02d"%
+            (sec // 60, sec % 60))
+
+    def updateconfacct(self, account):
+        """Output that we start updating folder structure for account."""
+
+        self.acct_startimes['updateconfacct'] = time.time()
+        self.logger.info("*** Updating folder structure for account '%s'"%
+            account)
+
+    def updateconfacctdone(self, account):
+        """Output that we finished updating folder structure for account."""
+
+        sec = time.time() - self.acct_startimes['updateconfacct']
+        del self.acct_startimes['updateconfacct']
+        self.logger.info("*** Finished account '%s' in %d:%02d"%
+            (account, sec // 60, sec % 60))
+
+    def getfoldercontent(self, oldfolder, newfolder, move=False):
+        """Log 'Moving folder content...'."""
+
+        self.acct_startimes['getfoldercontent'] = time.time()
+        prefix = "Moving " if move else "Copying "
+        prefix = "[DRYRUN] " + prefix if self.dryrun else prefix
+        self.info(('{0}folder content from "{1}" to "{2}"'.format(
+            prefix, oldfolder, newfolder)))
+
+    def getfoldercontentdone(self, oldfolder):
+        """Output that we finished operation on folder content for old folder."""
+
+        sec = time.time() - self.acct_startimes['getfoldercontent']
+        del self.acct_startimes['getfoldercontent']
+        self.logger.debug("*** Finished operation on '%s' in %d:%02d"%
+            (oldfolder, sec // 60, sec % 60))
+
+    def moveroot(self, account, newroot):
+        """Output that we are moving the root folder for the account."""
+
+        prefix = "[DRYRUN] " if self.dryrun else ""
+        self.logger.info("*** {0}Moving root folder for account '{1}' to {2}".format(
+            prefix, account, newroot))
+
+    def movemetadatadir(self, account, newmetadatadir):
+        """Output that we are moving the metadatadir for the account."""
+
+        self.logger.info("*** Moving metadata directory for account '%s' to %s"%
+                         (account, newmetadatadir))
+
     ############################## Folder syncing
     def makefolder(self, repo, foldername):
         """Called when a folder is created."""

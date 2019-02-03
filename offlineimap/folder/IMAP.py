@@ -96,6 +96,9 @@ class IMAPFolder(BaseFolder):
             name = imaputil.utf8_IMAP(name)
         return name
 
+    def getimapname(self):
+        return self.imap_name
+
     # Interface from BaseFolder
     def suggeststhreads(self):
         singlethreadperfolder_default = False
