@@ -49,9 +49,11 @@ class IMAPFolder(BaseFolder):
         #    querying the IMAP server, while False is used when creating
         #    a folder object from a locally available utf_8 name)
         # In any case the given name is first dequoted.
-        name = imaputil.dequote(name)
+        self.imap_name = imaputil.dequote(name)  # For update-conf mode
         if decode and repository.account.utf_8_support:
-            name = imaputil.IMAP_utf8(name)
+            name = imaputil.IMAP_utf8(self.imap_name)
+        else:
+            name = self.imap_name
         self.sep = imapserver.delim
         super(IMAPFolder, self).__init__(name, repository)
         if repository.getdecodefoldernames():

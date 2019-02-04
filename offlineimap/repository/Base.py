@@ -34,16 +34,9 @@ class BaseRepository(CustomConfig.ConfigHelperMixin):
         self.localeval = account.getlocaleval()
         self._accountname = self.account.getname()
         self._readonly = self.getconfboolean('readonly', False)
-        self.uiddir = os.path.join(self.config.getmetadatadir(), 'Repository-' + self.name)
-        if not os.path.exists(self.uiddir):
-            os.mkdir(self.uiddir, 0o700)
-        self.mapdir = os.path.join(self.uiddir, 'UIDMapping')
-        if not os.path.exists(self.mapdir):
-            os.mkdir(self.mapdir, 0o700)
-        # FIXME: self.uiddir variable name is lying about itself.
-        self.uiddir = os.path.join(self.uiddir, 'FolderValidity')
-        if not os.path.exists(self.uiddir):
-            os.mkdir(self.uiddir, 0o700)
+
+        self.mapdir = self.uiddir = self.metadatadir = None
+        self.getmetadata()
 
         self.nametrans = lambda foldername: foldername
         self.folderfilter = lambda foldername: 1
