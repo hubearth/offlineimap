@@ -257,7 +257,8 @@ class SyncableAccount(Account):
                 pass    # Failed to delete for some reason.
 
     def syncrunner(self):
-        """The target for both single and multi-threaded modes."""
+        """The target for three mode:
+        single mode, multi-threaded mode and update-conf mode."""
 
         self.ui.registerthread(self)
         try:
@@ -279,8 +280,13 @@ class SyncableAccount(Account):
         while looping:
             self.ui.acct(self)
             try:
+                # if not self.config.getboolean('general', 'is-new-config-source'):
                 self.__lock()
-                self.__sync()
+                if self.config.getboolean('general', 'update-conf'):
+                    self.get_folderlist()
+                else:
+                    self.__sync()
+
             except (KeyboardInterrupt, SystemExit):
                 raise
             except OfflineImapError as e:
@@ -292,17 +298,26 @@ class SyncableAccount(Account):
                         raise
                 self.ui.error(e, exc_info()[2])
             except Exception as e:
-                self.ui.error(e, exc_info()[2], msg=
-                    "While attempting to sync account '%s'"% self)
+                if self.config.newconfigsource:
+                    self.ui.error(e, exc_info()[2], msg=
+                        "While attempting to update account '%s'"% self)
+                else:
+                    self.ui.error(e, exc_info()[2], msg=
+                        "While attempting to sync account '%s'"% self)
             else:
                 # After success sync, reset the looping counter to 3.
                 if self.refreshperiod:
                     looping = 3
             finally:
                 self.ui.acctdone(self)
-                self._unlock()
-                if looping and self._sleeper() >= 2:
+                # If in update-conf mode, keep original account locked
+                # and don't run sleeper
+                if self.config.getboolean('general', 'update-conf'):
                     looping = 0
+                else:
+                    self._unlock()
+                    if looping and self._sleeper() >= 2:
+                        looping = 0
 
     def get_local_folder(self, remotefolder):
         """Return the corresponding local folder for a given remotefolder."""
@@ -312,8 +327,8 @@ class SyncableAccount(Account):
             replace(self.remoterepos.getsep(), self.localrepos.getsep()))
 
 
-    # The syncrunner will loop on this method. This means it is called more than
-    # once during the run.
+    # The syncrunner will loop on this method (unless in update-conf mode).
+    # This means it is called more than once during the run.
     def __sync(self):
         """Synchronize the account once, then return.
 
