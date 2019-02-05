@@ -556,6 +556,124 @@ class SyncableAccount(Account):
         hook = self.getconf('postupdateconfhook', '')  # Is this right?
         self.callhook(hook)
 
+    def get_content_from_account(self, oldaccount, move=False):
+        newaccount = self
+
+        old_remote_hash, new_remote_hash = {}, {}
+        old_local_hash, new_local_hash = {}, {}
+
+        for folder in oldaccount.remoterepos.getfolders():
+            old_remote_hash[folder.getimapname()] = folder
+
+        for folder in oldaccount.localrepos.getfolders():
+            old_local_hash[folder.getname()] = folder
+
+        for folder in newaccount.remoterepos.getfolders():
+            new_remote_hash[folder.getimapname()] = folder
+
+        for folder in newaccount.localrepos.getfolders():
+            new_local_hash[folder.getname()] = folder
+
+        # Loop through remote folder and get local folder correspondance
+        for new_remote_imapname, new_remote_folder in new_remote_hash.items():
+            if not new_remote_folder.sync_this:
+                self.ui.debug('', "Ignoring filtered folder in new config '%s'"
+                              "[%s]"% (new_remote_folder.getname(),
+                                       newaccount.remoterepos))
+                continue  # Ignore filtered folder.
+            if not new_remote_imapname in old_remote_hash.keys():
+                self.ui.debug('', "Ignoring filtered folder in old config '%s'"
+                              "[%s]"% (new_remote_folder.getname(),
+                                       newaccount.remoterepos))
+                continue  # Ignore filtered folder.
+
+            # Apply old remote nametrans and fix serparator.
+            old_remote_folder = old_remote_hash[new_remote_imapname]
+            old_local_name = old_remote_folder.getvisiblename().replace(
+                oldaccount.remoterepos.getsep(),
+                oldaccount.localrepos.getsep())
+            if old_local_name not in old_local_hash.keys():
+                self.ui.debug('', "Ignoring unsynced folder '%s'"
+                              "[%s]"% (new_remote_folder.getname(),
+                                       newaccount.remoterepos))
+                continue  # Ignore unsynced folder.
+            old_local_folder = oldaccount.get_local_folder(old_remote_folder)
+
+            # Check for CTRL-C or SIGTERM (not sure if it's ok).
+            if (oldaccount.abort_NOW_signal.is_set()
+              or newaccount.abort_NOW_signal.is_set()):
+                break
+
+            if not newaccount.localrepos.getconfboolean('readonly', False):
+                if not newaccount.dryrun:
+                    new_local_folder = newaccount.get_local_folder(new_remote_folder)
+                else:
+                    new_local_folder = new_remote_folder.getvisiblename().replace(
+                        newaccount.remoterepos.getsep(),
+                        newaccount.localrepos.getsep())
+                self.__get_folder_content(oldaccount, old_local_folder,
+                                          new_local_folder, new_remote_folder)
+
+        mbnames.writeIntermediateFile(self.name) # Write out mailbox names.
+
+    def __get_folder_content(self, oldaccount, old_localfolder,
+                             new_localfolder, new_remotefolder,  movecontent=False):
+        """Get the content from old_local_folder"""
+
+        newaccount = self
+        old_localfolder_name = old_localfolder.name
+        new_localfolder_name = new_localfolder if self.dryrun \
+                               else new_localfolder.name
+
+        newaccount.ui.getfoldercontent(old_localfolder_name,
+                                       new_localfolder_name,
+                                       movecontent)
+
+        if self.dryrun:
+            newaccount.ui.getfoldercontentdone(old_localfolder_name)
+            return
+
+        try:
+            # Add the folder to the mbnames mailboxes.
+            mbnames.add(newaccount.name, newaccount.localrepos.root,
+                        new_localfolder.getname())
+
+            statusfolder = newaccount.statusrepos.getfolder(
+                new_remotefolder.getvisiblename().
+                replace(newaccount.remoterepos.getsep(),
+                        newaccount.statusrepos.getsep()))
+            statusfolder.openfiles()
+            statusfolder.cachemessagelist()
+
+            old_localfolder.cachemessagelist()
+            new_localfolder.cachemessagelist()
+            # check_uid_validity???
+
+            # At this point, is this test necessary?
+            if not newaccount.localrepos.getconfboolean('readonly', False):
+                old_localfolder.syncmessagesto(new_localfolder, statusfolder)
+            else:
+                self.ui.debug('', "Not sending content to read-only repository '%s'"%
+                              newaccount.localrepos.getname())
+
+            statusfolder.save()
+            newaccount.localrepos.restore_atime()
+
+            if movecontent:
+                old_localfolder.deletemessages(old_localfolder.getmessageuidlist())
+                oldaccount.deletefolder(old_localfolder.name)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            self.ui.error(e, msg="ERROR in syncfolder for %s folder %s: %s"%
+                          (newaccount, old_localfolder.getvisiblename(), traceback.format_exc()))
+            raise  # Raise unknown Exceptions so we can fix them.
+        finally:
+            for folder in ["statusfolder", "old_localfolder", "new_localfolder"]:
+                if folder in locals():
+                    locals()[folder].dropmessagelistcache()
+        statusfolder.closefiles()
+
 
 #XXX: This function should likely be refactored. This should not be passed the
 # account instance.
