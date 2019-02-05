@@ -628,6 +628,189 @@ class OfflineImap(object):
                 prof.dump_stats(os.path.join(
                     profiledir, "%s_%s.prof"% (dt, account.getname())))
 
+    def __updateconf(self, list_oldaccounts, list_newaccounts, profiledir):
+        """Executed only in singlethreaded mode.
+
+        For each account found in new config source file,
+        get folder structure from both files and change
+        local repository accordingly.
+
+        Assumes that list_newaccounts are only existing account
+        in old config file, and that config_filename and newconfig_filename
+        are defined.
+
+        :param accs: A list of accounts that should be synced
+        """
+        if profiledir:
+            self.ui.error("Profile mode in config update is not implemented yet!")
+            # Profile mode.
+            raise NotImplementedError
+            
+        self.ui.updateconf(self.config_filename, self.newconfig_filename)
+        
+        # For each account in new config file, initiate both
+        # account (old and new). Then set a temporary dir for
+        # the new folder structure
+        for accountname in list_newaccounts:
+            updatedone = False
+            self.ui.updateconfacct(accountname)
+            
+            try:
+                # Disable remote folder creation
+                conf_account_remoterepos = 'Repository ' + \
+                                           self.newconfig.get("Account " + accountname,
+                                                              'remoterepository')
+                self.config.set(conf_account_remoterepos,
+                                'createfolders',
+                                'False')
+                self.newconfig.set(conf_account_remoterepos,
+                                'createfolders',
+                                'False')
+                localrepos = 'Repository ' + \
+                             self.config.get("Account " + accountname,
+                                             'localrepository')
+                newconf_localfolders = os.path.expanduser(
+                    self.newconfig.get(localrepos, 'localfolders'))
+                failedupdaterestore = os.path.expanduser(
+                    self.newconfig.get('general', 'failedupdaterestore'))
+
+                # Set temporary dir for dryrun. Otherwise, old and new accounts
+                # will point to the same dir.
+                if self.newconfig.getboolean('general', 'dry-run'):
+                    if failedupdaterestore:
+                        newtmpmetadatadir = failedupdaterestore                            
+                    else:
+                        tmpfolder_name = '.tmp-update-dryrun'
+                        metadatadir = os.path.expanduser(self.newconfig.
+                                                            getdefault("general",
+                                                                       "metadata",
+                                                                       "~/.offlineimap"))
+                        tmpfolder = os.path.join(metadatadir,
+                                                 tmpfolder_name)
+                        if not os.path.exists(tmpfolder):
+                            os.makedirs(tmpfolder, 0o700)
+                        newtmplocalfolders = os.path.join(metadatadir,
+                                                          tmpfolder,
+                                                          os.path.basename(newconf_localfolders))
+                        self.newconfig.set(newconf_account_remoterepos,
+                                           'localfolders',
+                                           newtmplocalfolders)
+                        newtmpmetadatadir = os.path.join(metadatadir,
+                                                         tmpfolder,
+                                                         'metadata')
+                    self.newconfig.set('general', 'metadata', newtmpmetadatadir)
+
+                threading.currentThread().name = \
+                        "Account getfolder %s"% accountname
+
+                ### Old account
+                oldaccount = accounts.SyncableAccount(self.config,
+                                                      accountname)
+                oldaccount.syncrunner()
+
+                ### Proceed to update
+                # Check for CTRL-C or SIGTERM (not sure if it's ok).
+                if oldaccount.abort_NOW_signal.is_set():
+                    break
+
+                # Backup metadata and point old account to it
+                metadatadir = os.path.expanduser(oldaccount.metadatadir)
+                metadatabak = os.path.join(metadatadir,
+                                           "UpdateBackup_" + accountname)
+                oldaccount.movemetadatadir(metadatabak)
+
+                # Move oldlocalrepo to a backup folder
+                from datetime import datetime
+                updatetime = datetime.today().strftime('%y%m%d.%H%M')
+                maildir = oldaccount.localrepos.root
+                mailbak = self.getbackupname(
+                    os.path.join(metadatabak, '{0}.{1}'.format(
+                        os.path.basename(maildir), updatetime)))
+                oldaccount.localrepos.moveroot(mailbak)
+                oldaccount.localrepos.forgetfolders()
+                oldaccount.localrepos.getfolders()
+
+                ### New account
+                if failedupdaterestore \
+                   and not self.newconfig.getboolean('general', 'dry-run'):
+                    from shutil import move
+                    move(os.path.join(failedupdaterestore,
+                                      os.path.basename(newconf_localfolders)),
+                         newconf_localfolders)
+                    for item in os.listdir(failedupdaterestore):
+                        s = os.path.join(failedupdaterestore, item)
+                        d = os.path.join(metadatadir, item)
+                        move(s, d)
+                    os.rmdir(failedupdaterestore)
+
+                newaccount = accounts.SyncableAccount(self.newconfig,
+                                                      accountname)
+                newaccount.syncrunner()
+
+                # Check for CTRL-C or SIGTERM (not sure if it's ok).
+                if newaccount.abort_NOW_signal.is_set():
+                    break
+
+                # Create the new folder structure
+                newaccount.remoterepos.sync_folder_structure(newaccount.localrepos,
+                                                             newaccount.statusrepos)
+                # Moving old content into new structure
+                newaccount.get_content_from_account(oldaccount, True)
+
+            except:
+                try:
+                    newaccount
+                except:
+                    pass
+                else:
+                    # Backup failed update metadata
+                    failedmetadatabak = self.getbackupname(
+                    os.path.join(os.path.expanduser(newaccount.metadatadir),
+                                 "FailedUpdate_{0}.{1}".format(accountname, updatetime)))
+                    newaccount.movemetadatadir(failedmetadatabak)
+                    # Backup failed update maildir
+                    mailbasename = os.path.basename(newaccount.localrepos.root)
+                    failedmaildirbak = os.path.join(failedmetadatabak, mailbasename)
+                    newaccount.localrepos.moveroot(failedmaildirbak)
+                try:
+                    oldaccount
+                except:
+                    pass
+                else:
+                    # Move back old account maildir and metadata to their original dir
+                    if oldaccount.metadatadir != metadatadir:
+                        oldaccount.movemetadatadir(metadatadir)
+                    try:
+                        oldaccount.localrepos
+                    except:
+                        pass
+                    else:
+                        if oldaccount.localrepos.root != maildir:
+                            oldaccount.localrepos.moveroot(maildir)
+                raise
+
+            finally:
+                oldaccount._unlock()
+                newaccount._unlock()
+                if self.newconfig.getboolean('general', 'dry-run') \
+                   and os.path.exists(tmpfolder):
+                    from shutil import rmtree
+                    try:
+                        rmtree(tmpfolder)
+                    except IOError:
+                        raise #TODO Message error
+                    self.ui.updateconfacctdone(accountname)
+
+        self.ui.updateconfdone()
+
+    def getbackupname(self, folder):
+        i = 0
+        while os.path.exists(folder):
+            i += 1
+            folder = '{0}.{1}'.format(folder, i)
+        return folder
+
+
     def __serverdiagnostics(self, options):
         self.ui.info("  imaplib2: %s (%s)"% (imaplib.__version__, imaplib.DESC))
         for accountname in self._get_activeaccounts(options):
