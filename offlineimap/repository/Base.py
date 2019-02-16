@@ -24,6 +24,7 @@ from offlineimap import CustomConfig
 from offlineimap.ui import getglobalui
 from offlineimap.error import OfflineImapError
 
+from trepan.api import debug
 
 class BaseRepository(CustomConfig.ConfigHelperMixin):
     def __init__(self, reposname, account):
@@ -34,16 +35,9 @@ class BaseRepository(CustomConfig.ConfigHelperMixin):
         self.localeval = account.getlocaleval()
         self._accountname = self.account.getname()
         self._readonly = self.getconfboolean('readonly', False)
-        self.uiddir = os.path.join(self.config.getmetadatadir(), 'Repository-' + self.name)
-        if not os.path.exists(self.uiddir):
-            os.mkdir(self.uiddir, 0o700)
-        self.mapdir = os.path.join(self.uiddir, 'UIDMapping')
-        if not os.path.exists(self.mapdir):
-            os.mkdir(self.mapdir, 0o700)
-        # FIXME: self.uiddir variable name is lying about itself.
-        self.uiddir = os.path.join(self.uiddir, 'FolderValidity')
-        if not os.path.exists(self.uiddir):
-            os.mkdir(self.uiddir, 0o700)
+
+        self.mapdir = self.uiddir = self.metadatadir = None
+        self.getmetadata()
 
         self.nametrans = lambda foldername: foldername
         self.folderfilter = lambda foldername: 1
@@ -67,12 +61,15 @@ class BaseRepository(CustomConfig.ConfigHelperMixin):
         if self.metadatadir and self.mapdir and self.uiddir:
             return self.metadatadir, self.mapdir, self.uiddir
         else:
-            self.metadatadir = os.path.join(self.config.getmetadatadir(), 'Repository-' + self.name)
+            self.metadatadir = os.path.join(self.config.getmetadatadir(),
+                                            'Repository-' + self.name)
             if not os.path.exists(self.metadatadir):
                 os.mkdir(self.metadatadir, 0o700)
             self.mapdir = os.path.join(self.metadatadir, 'UIDMapping')
             if not os.path.exists(self.mapdir):
                 os.mkdir(self.mapdir, 0o700)
+            # FIXME: self.uiddir variable name is lying about itself.
+            # (Still useful with this new method???)
             self.uiddir = os.path.join(self.metadatadir, 'FolderValidity')
             if not os.path.exists(self.uiddir):
                 os.mkdir(self.uiddir, 0o700)

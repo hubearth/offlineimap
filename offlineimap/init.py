@@ -28,6 +28,8 @@ from optparse import OptionParser
 import offlineimap
 import offlineimap.virtual_imaplib2 as imaplib
 
+from trepan.api import debug
+
 # Ensure that `ui` gets loaded before `threadutil` in order to
 # break the circular dependency between `threadutil` and `Curses`.
 from offlineimap.ui import UI_LIST, setglobalui, getglobalui
@@ -654,7 +656,7 @@ class OfflineImap(object):
         for accountname in list_newaccounts:
             updatedone = False
             self.ui.updateconfacct(accountname)
-            
+
             try:
                 # Disable remote folder creation
                 conf_account_remoterepos = 'Repository ' + \
@@ -687,12 +689,17 @@ class OfflineImap(object):
                                                                        "~/.offlineimap"))
                         tmpfolder = os.path.join(metadatadir,
                                                  tmpfolder_name)
+
                         if not os.path.exists(tmpfolder):
                             os.makedirs(tmpfolder, 0o700)
                         newtmplocalfolders = os.path.join(metadatadir,
                                                           tmpfolder,
                                                           os.path.basename(newconf_localfolders))
-                        self.newconfig.set(newconf_account_remoterepos,
+
+                        newconf_localrepos = 'Repository ' + \
+                             self.config.get("Account " + accountname,
+                                             'localrepository')
+                        self.newconfig.set(newconf_localrepos,
                                            'localfolders',
                                            newtmplocalfolders)
                         newtmpmetadatadir = os.path.join(metadatadir,
@@ -717,6 +724,7 @@ class OfflineImap(object):
                 metadatadir = os.path.expanduser(oldaccount.metadatadir)
                 metadatabak = os.path.join(metadatadir,
                                            "UpdateBackup_" + accountname)
+
                 oldaccount.movemetadatadir(metadatabak)
 
                 # Move oldlocalrepo to a backup folder
@@ -754,8 +762,9 @@ class OfflineImap(object):
                 # Create the new folder structure
                 newaccount.remoterepos.sync_folder_structure(newaccount.localrepos,
                                                              newaccount.statusrepos)
+
                 # Moving old content into new structure
-                newaccount.get_content_from_account(oldaccount, True)
+                newaccount.get_content_from_account(oldaccount)
 
             except:
                 try:

@@ -385,6 +385,18 @@ class UIBase(object):
         self.info(('{0}folder content from "{1}" to "{2}"'.format(
             prefix, oldfolder, newfolder)))
 
+    def nbmessagestosend(self, folder_basename, nbofmessages, movecontent):
+        """ Output the number of messages (files) this operation will move."""
+
+        indent = '{:>4}'.format('')
+        prefix = "[DRYRUN] " if self.dryrun else ""
+        action = 'Moving ' if movecontent else 'Copying '
+        if nbofmessages == 0:
+            self.info("Folder empty.")
+        else:
+            self.info(("{0}{1}{2}{3} messages to folder '{4}'".format(
+                indent, prefix, action, nbofmessages, folder_basename)))
+
     def getfoldercontentdone(self, oldfolder):
         """Output that we finished operation on folder content for old folder."""
 

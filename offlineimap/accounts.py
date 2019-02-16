@@ -28,6 +28,8 @@ from offlineimap.repository import Repository
 from offlineimap.ui import getglobalui
 from offlineimap.threadutil import InstanceLimitedThread
 
+from trepan.api import debug
+
 FOLDER_NAMESPACE = 'LIMITED_FOLDER_'
 # Key: account name, Value: Dict of Key: remotefolder name, Value: lock.
 SYNC_MUTEXES = {}
@@ -486,6 +488,7 @@ class SyncableAccount(Account):
             return
 
         try:
+            from shutil import move
             # Get list of metadata objects to move to backup folder
             movables = []
             movables.append(self.getaccountmeta())
@@ -501,7 +504,7 @@ class SyncableAccount(Account):
             # Move metadata
             for m in movables:
                 basename = os.path.basename(m)
-                os.renames(m, os.path.join(newmetadatadir, basename))
+                move(m, os.path.join(newmetadatadir, basename))
 
             self._lockfilepath = os.path.join(
                 newmetadatadir,
@@ -556,7 +559,7 @@ class SyncableAccount(Account):
         hook = self.getconf('postupdateconfhook', '')  # Is this right?
         self.callhook(hook)
 
-    def get_content_from_account(self, oldaccount, move=False):
+    def get_content_from_account(self, oldaccount):
         newaccount = self
 
         old_remote_hash, new_remote_hash = {}, {}
@@ -617,10 +620,11 @@ class SyncableAccount(Account):
         mbnames.writeIntermediateFile(self.name) # Write out mailbox names.
 
     def __get_folder_content(self, oldaccount, old_localfolder,
-                             new_localfolder, new_remotefolder,  movecontent=False):
+                             new_localfolder, new_remotefolder):
         """Get the content from old_local_folder"""
 
         newaccount = self
+        movecontent = self.config.getboolean('general', 'movecontent')
         old_localfolder_name = old_localfolder.name
         new_localfolder_name = new_localfolder if self.dryrun \
                                else new_localfolder.name
@@ -638,41 +642,49 @@ class SyncableAccount(Account):
             mbnames.add(newaccount.name, newaccount.localrepos.root,
                         new_localfolder.getname())
 
-            statusfolder = newaccount.statusrepos.getfolder(
-                new_remotefolder.getvisiblename().
-                replace(newaccount.remoterepos.getsep(),
-                        newaccount.statusrepos.getsep()))
-            statusfolder.openfiles()
-            statusfolder.cachemessagelist()
-
-            old_localfolder.cachemessagelist()
-            new_localfolder.cachemessagelist()
             # check_uid_validity???
 
             # At this point, is this test necessary?
             if not newaccount.localrepos.getconfboolean('readonly', False):
+                old_localfolder.sendcontentto(new_localfolder, movecontent)
+
+                '''In first draft, I was using syncmessagesto() to be sure all 
+                data were copied/moved. But, as I understand it now, there is 
+                no database for messages. I now use sendcontentto(). I keep 
+                this code so that people can comment on which version is better.
+
+                statusfolder = newaccount.statusrepos.getfolder(
+                    new_remotefolder.getvisiblename().
+                    replace(newaccount.remoterepos.getsep(),
+                            newaccount.statusrepos.getsep()))
+                statusfolder.openfiles()
+                statusfolder.cachemessagelist()
+
+                old_localfolder.cachemessagelist()
+                new_localfolder.cachemessagelist()
+
                 old_localfolder.syncmessagesto(new_localfolder, statusfolder)
+                statusfolder.save()
+                statusfolder.closefiles()'''
+
             else:
                 self.ui.debug('', "Not sending content to read-only repository '%s'"%
                               newaccount.localrepos.getname())
 
-            statusfolder.save()
             newaccount.localrepos.restore_atime()
 
-            if movecontent:
-                old_localfolder.deletemessages(old_localfolder.getmessageuidlist())
-                oldaccount.deletefolder(old_localfolder.name)
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
-            self.ui.error(e, msg="ERROR in syncfolder for %s folder %s: %s"%
-                          (newaccount, old_localfolder.getvisiblename(), traceback.format_exc()))
+            self.ui.error(e, msg="ERROR while getting folder content for %s: %s"%
+                          (new_localfolder.getvisiblename(), traceback.format_exc()))
             raise  # Raise unknown Exceptions so we can fix them.
+        else:
+            newaccount.ui.getfoldercontentdone(old_localfolder_name)
         finally:
             for folder in ["statusfolder", "old_localfolder", "new_localfolder"]:
                 if folder in locals():
                     locals()[folder].dropmessagelistcache()
-        statusfolder.closefiles()
 
 
 #XXX: This function should likely be refactored. This should not be passed the
@@ -726,6 +738,7 @@ def syncfolder(account, remotefolder, quick):
             remotefolder.save_uidvalidity()
 
     def cachemessagelists_upto_date(date):
+
         """Returns messages with uid > min(uids of messages newer than date)."""
 
         remotefolder.cachemessagelist(
@@ -754,6 +767,7 @@ def syncfolder(account, remotefolder, quick):
                 remotefolder.cachemessagelist(min_uid=min(uids))
 
     def cachemessagelists_startdate(new, partial, date):
+
         """Retrieve messagelists when startdate has been set for
         the folder 'partial'.
 
@@ -769,7 +783,9 @@ def syncfolder(account, remotefolder, quick):
         might not correspond. But, if we're cloning a folder into a new one,
         [min_uid, ...] does correspond to [1, ...].
 
-        This is just for IMAP-IMAP. For Maildir-IMAP, use maxage instead."""
+        This is just for IMAP-IMAP. For Maildir-IMAP, use maxage instead.
+
+                """
 
         new.cachemessagelist()
         min_uid = partial.retrieve_min_uid()
