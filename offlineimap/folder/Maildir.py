@@ -552,69 +552,114 @@ class MaildirFolder(BaseFolder):
                               " Neither `%s' nor `%s' found")
                              % (filename, oldfmd5, self._foldermd5))
 
-    def sendcontentto(self, dstfolder, movecontent=False, dryrun=False):
-        from shutil import move, copy2
+    def sendcontentto(self, dstfolder, srcstatusfolder, dststatusfolder,
+                      movecontent=False, dryrun=False):
+        '''We avoid using Maildir.cachemessagelist() in order to drastically
+        improve performance. Instead, we use statusrepos and
+        listdir().'''
+        from shutil import move, copy2, rmtree
 
         srcfolder = self
-        folderpath = os.path.join(srcfolder.root, srcfolder.name)
+        srcstatusfolder.cachemessagelist()
+        dststatusfolder.cachemessagelist()
+        srcfolderpath = os.path.join(srcfolder.root, srcfolder.name)
+        dstfolderpath = os.path.join(dstfolder.root, dstfolder.name)
+        savemsgtostatusfolder = True
 
-        for d in os.listdir(folderpath):
-            if os.path.isdir(os.path.join(folderpath, d)):
-                messages = os.listdir(os.path.join(folderpath, d))
-                num = 0
-                totalnum = len(messages)
-                self.ui.nbmessagestosend(os.path.join(dstfolder.name, d),
-                                         totalnum, movecontent)
+        # To speed up process, when dststatusfolder is empty, we copy status
+        # file and test on maildir folder for existing messages. If
+        # dststatusfolder is not empty, we procede to savemessage.
+        if len(dststatusfolder.getmessageuidlist()) == 0 \
+           and len(srcstatusfolder.getmessageuidlist()) > 0:
+            savemsgtostatusfolder = False
 
-                for f in messages:
-                    #TODO: Show progression
+        if savemsgtostatusfolder:
+            sendmsglist = [uid for uid in srcstatusfolder.getmessageuidlist()
+                           if not dststatusfolder.uidexists(uid)]
+        else:
+            sendmsglist = srcstatusfolder.getmessageuidlist()
+        num_of_msg = len(sendmsglist)
 
-                    if os.path.isdir(os.path.join(folderpath, d, f)):
-                        '''There should not be any folder in here. If there
-                        is, should we also deal with it? In a sane folder
-                        structure, this should not happen. Or am I wrong?'''
+        if not savemsgtostatusfolder and num_of_msg > 0:
+            try:
+                dststatusfolder.closefiles()
+                copy2(srcstatusfolder.filename, dststatusfolder.filename)
+            except OSError:
+                savemsgtostatusfolder = True
+                pass
 
-                        self.ui.info("A folder was found in source folder '{0}'"
-                                     "while trying to move its content. Ignoring"
-                                     "'{1}'. This indicate that the original"
-                                     "folder structure is probably corrupt in"
-                                     "some way. Please investigate.",
-                                     format(os.path.join(srcfolder.name, d), f))
-                        continue
+        self.ui.nbmessagestosend(dstfolder.name, num_of_msg, movecontent)
 
-                    dstfile = os.path.join(dstfolder.root, dstfolder.name, d, f)
-                    if movecontent:
-                        #TODO: Prevent or ask file overwrite
-                        move(os.path.join(folderpath, d, f),
-                             dstfile)
-                    else:
-                        num += 1
-                        if os.path.exists(dstfile):
-                            self.ui.ignorecopyingmessage(f, srcfolder, dstfolder)
-                            continue
-                        if not dryrun:
-                            copy2(os.path.join(folderpath, d, f),
-                                  dstfile)
+        filelist = {}
+        try:
+            for f in os.listdir(os.path.join(srcfolderpath, 'cur')) \
+                   + os.listdir(os.path.join(srcfolderpath, 'new')):
+                uidmatch = re_uidmatch.search(f)
+                if uidmatch:
+                    filelist[int(uidmatch.group(1))] = f
+        except OSError:
+            pass
 
-                if (movecontent
-                    and len(os.listdir(os.path.join(folderpath, d))) == 0
-                        and not dryrun):
-                    os.rmdir(os.path.join(folderpath, d))
-                elif movecontent and not dryrun:
-                    self.ui.info("Folder {0} is not empty. Some files were not moved".
-                                 format(os.path.join(folderpath, d)))
+        #TODO :
+        # -Ignore UIDs???
 
-            else:
-                '''If there is a file in srcfolder, should we also deal with it? In a 
-                sane folder structure, this should not happen. Or am I wrong?
-                move(os.path.join(folderpath, d),
-                     os.join(dstfolder.root, dstfolder.name, f))'''
-                self.ui.ignorecopyingmessage(self._parse_filename(d)['UID'],
-                                             srcfolder, dstfolder)
+        for num, uid in enumerate(sendmsglist):
+            #TODO: Bail out on CTRL-C or SIGTERM.
+            '''if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break'''
+            try:
+                # Should we check that UID > 0?
+                # With Maildir, there shouldn't be any UID = 0, or am I wrong?
+                num += 1
+                filename = filelist[uid]
+                flags = srcstatusfolder.getmessageflags(uid)
+                dir_prefix = 'cur' if 'S' in flags else 'new'
+                srcfilepath = os.path.join(srcfolderpath, dir_prefix, filename)
+                dstfilepath = os.path.join(dstfolderpath, dir_prefix, filename)
 
-        if movecontent and len(os.listdir(folderpath)) == 0 \
+                self.ui.sendingmessage(uid, num, num_of_msg,
+                                       srcfolder, dstfolder, movecontent)
+
+                if dryrun:
+                    continue
+                if movecontent:
+                    #TODO: Prevent or ask file overwrite
+                    move(srcfilepath, dstfilepath)
+                else:
+                    if os.path.exists(dstfilepath):
+                        self.ui.ignorecopyingmessage(filename, srcfolder, dstfolder)
+                    elif not dryrun:
+                        copy2(srcfilepath, dstfilepath)
+            except Exception as e:
+                self.ui.info(
+                    "Error while sending content of folder {0}, to {1} : '{2}'".
+                    format(srcfolder.name, dstfolder.name, e))
+                raise
+
+            if savemsgtostatusfolder:
+                labels = srcstatusfolder.getmessagelabels(uid)
+                # Should we save rtime and mtime?
+                dststatusfolder.savemessage(uid, None, flags, 0, 0, labels)
+                dststatusfolder.save()
+
+        for folder in ["srcfolder", "srcstatusfolder", "dststatusfolder"]:
+            if folder in locals():
+                locals()[folder].dropmessagelistcache()
+
+        if num_of_msg == 0:
+            num = 0
+
+        if movecontent \
+           and num == num_of_msg \
            and not dryrun:
-            os.rmdir(folderpath)
+            try:
+                rmtree(srcfolderpath)
+            except OSError:
+                self.ui.warn(
+                    "Error while removing source folder {0}, but no \
+                    messages were left in it.".format(srcfolder.root))
+                pass
         elif movecontent and not dryrun:
-            self.ui.info("Folder {0} is not empty. Some files were not moved.".
-                         format(folderpath))
+            self.ui.warn(
+                "Folder {0} is not empty. Some files were not moved. \
+                Please investigate source statusfolder.".format(srcfolder.root))
